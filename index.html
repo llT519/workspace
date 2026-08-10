@@ -405,6 +405,18 @@ body::before{display:none!important}
 .dash-progress-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
 .dash-progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent-primary,#10DF9A),var(--highlight,#C8F5E8));transition:width .6s ease}
 
+/* 存钱交易记录 */
+.savings-log{display:flex;flex-direction:column;gap:4px;max-height:180px;overflow-y:auto}
+.savings-log-item{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;font-size:12px;background:rgba(0,0,0,.15)}
+.savings-log-item .log-type{font-weight:600}
+.savings-log-item .log-type.in{color:#35e9bb}
+.savings-log-item .log-type.out{color:#ff7280}
+.savings-log-item .log-amount{font-weight:600;color:var(--text-primary)}
+.savings-log-item .log-time{color:var(--text-tertiary);font-size:11px}
+.savings-log-empty{text-align:center;color:var(--text-tertiary);font-size:12px;padding:10px}
+.btn-danger{border-color:rgba(255,100,100,.3);background:rgba(255,100,100,.1);color:#ff8a8a}
+.btn-danger:hover{background:rgba(255,100,100,.2)}
+
 .dash-bottom{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media (max-width:767px){.dash-bottom{grid-template-columns:1fr}}
 .dash-section-title{font-size:12px;font-weight:600;color:var(--text-secondary,#B7C0BD);margin-bottom:8px}
@@ -586,7 +598,10 @@ body::before{display:none!important}
       <div class="module-card" id="module-savings">
         <div class="module-header">
           <div class="module-header-left"><span style="font-size:24px">💰</span><h2>存钱计划</h2></div>
-          <button class="btn btn-ghost btn-sm" id="editSavingsGoalBtn">设定目标</button>
+          <div>
+            <button class="btn btn-ghost btn-sm" id="editSavingsGoalBtn">设定目标</button>
+            <button class="btn btn-ghost btn-sm" id="resetSavingsBtn" style="margin-left:4px">重置</button>
+          </div>
         </div>
         <div class="savings-card">
           <div class="savings-amount" id="savingsAmount">¥0</div>
@@ -594,10 +609,13 @@ body::before{display:none!important}
           <div class="progress-bar"><div class="progress-fill" id="savingsProgress" style="width:0%"></div></div>
           <div style="font-size:12px;color:var(--text-tertiary)" id="savingsPercent">0%</div>
         </div>
-        <div class="savings-add">
-          <input class="input" id="savingsAddAmount" type="number" placeholder="存入金额" min="1" style="max-width:140px">
-          <button class="btn" id="addSavingsBtn">＋ 存入</button>
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <input class="input" id="savingsAmountInput" type="number" placeholder="金额" min="1" style="flex:1">
+          <button class="btn" id="depositBtn" style="flex:1">＋ 存入</button>
+          <button class="btn btn-danger" id="withdrawBtn" style="flex:1">－ 取出</button>
         </div>
+        <div class="dash-section-title" style="margin-bottom:6px">📋 交易记录</div>
+        <div class="savings-log" id="savingsLog"></div>
       </div>
 
       <!-- 6. 英语学习 -->
@@ -1167,7 +1185,8 @@ document.getElementById('exerciseCustom').addEventListener('keydown', e=>{ if(e.
 // ==================== 5. 存钱计划 ====================
 function getSavingsData(){
   let data = loadData('savings');
-  if(!data){ data = { target: 0, saved: 0 }; saveData('savings', data); }
+  if(!data){ data = { target: 0, saved: 0, transactions: [] }; saveData('savings', data); }
+  if(!data.transactions) data.transactions = [];
   return data;
 }
 
@@ -1178,31 +1197,48 @@ function renderSavings(){
   const pct = data.target ? Math.min(100, Math.round(data.saved / data.target * 100)) : 0;
   document.getElementById('savingsProgress').style.width = pct + '%';
   document.getElementById('savingsPercent').textContent = pct + '%';
+  const log = document.getElementById('savingsLog');
+  const recent = (data.transactions||[]).slice().reverse().slice(0, 20);
+  log.innerHTML = recent.length ? recent.map(t=>`
+    <div class="savings-log-item">
+      <span class="log-type ${t.type==='in'?'in':'out'}">${t.type==='in'?'＋存入':'－取出'}</span>
+      <span class="log-amount">¥${t.amount.toLocaleString()}</span>
+      <span class="log-time">${t.time||''}</span>
+    </div>
+  `).join('') : '<div class="savings-log-empty">暂无记录</div>';
 }
 
-function addSavings(){
-  const amount = parseInt(document.getElementById('savingsAddAmount').value) || 0;
+function doSavingsTransaction(type){
+  const amount = parseInt(document.getElementById('savingsAmountInput').value) || 0;
   if(!amount || amount <= 0) return showToast('请输入有效金额');
   const data = getSavingsData();
-  data.saved += amount;
+  if(type === 'out' && amount > data.saved) return showToast('余额不足，无法取出');
+  data.saved += type==='in' ? amount : -amount;
+  data.transactions.push({ type, amount, time: new Date().toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) });
+  if(data.transactions.length > 100) data.transactions = data.transactions.slice(-100);
   saveData('savings', data);
-  document.getElementById('savingsAddAmount').value = '';
+  document.getElementById('savingsAmountInput').value = '';
   renderSavings();refreshOverview();
-  showToast(`已存入 ¥${amount.toLocaleString()} 💰`);
+  showToast(type==='in' ? `已存入 ¥${amount.toLocaleString()} 💰` : `已取出 ¥${amount.toLocaleString()}`);
 }
 
 function editSavingsGoal(){
   const data = getSavingsData();
   const target = prompt('设定存钱目标（元）：', data.target || 10000);
-  if(target !== null){
-    const val = parseInt(target) || 0;
-    if(val > 0){ data.target = val; saveData('savings', data); renderSavings(); showToast('目标已更新 ✓'); }
-  }
+  if(target !== null){ const val = parseInt(target) || 0; if(val >= 0){ data.target = val; saveData('savings', data); renderSavings(); showToast(val ? '目标已更新 ✓' : '目标已清除'); } }
 }
 
-document.getElementById('addSavingsBtn').addEventListener('click', addSavings);
+function resetSavings(){
+  if(!confirm('确定重置存钱计划？所有数据将清空。')) return;
+  saveData('savings', { target: 0, saved: 0, transactions: [] });
+  renderSavings();refreshOverview(); showToast('存钱计划已重置');
+}
+
+document.getElementById('depositBtn').addEventListener('click', ()=>doSavingsTransaction('in'));
+document.getElementById('withdrawBtn').addEventListener('click', ()=>doSavingsTransaction('out'));
 document.getElementById('editSavingsGoalBtn').addEventListener('click', editSavingsGoal);
-document.getElementById('savingsAddAmount').addEventListener('keydown', e=>{ if(e.key==='Enter') addSavings(); });
+document.getElementById('resetSavingsBtn').addEventListener('click', resetSavings);
+document.getElementById('savingsAmountInput').addEventListener('keydown', e=>{ if(e.key==='Enter') doSavingsTransaction('in'); });
 
 // ==================== 6. 英语学习 ====================
 function getEnglishData(){
