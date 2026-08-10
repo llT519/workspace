@@ -1106,9 +1106,14 @@ async function initAuth(){
   document.getElementById('authBtn').addEventListener('click', async function(){
     const uname = document.getElementById('authUsername').value.trim();
     const pw = document.getElementById('authPassword').value;
-    if(!pw) return;
+    if(!pw){ document.getElementById('authError').textContent = '请输入密码'; return; }
     const isSetup = !hasPersistentAuth();
-    await verifyAndLogin(uname, pw, isSetup);
+    try {
+      await verifyAndLogin(uname, pw, isSetup);
+    } catch(e) {
+      document.getElementById('authError').textContent = '登录失败：' + (e.message || '未知错误');
+      console.error(e);
+    }
   });
   document.getElementById('authPassword').addEventListener('keydown', async function(e){
     if(e.key==='Enter'){ document.getElementById('authBtn').click(); }
@@ -1137,10 +1142,6 @@ async function initAuth(){
 }
 
 // --- 手动锁定按钮事件（在 init 中绑定） ---
-function bindLockButton(){
-  // 在品牌区域下方加锁定按钮（桌面端）
-  // 使用现有导航栏结构，在底部加
-}
 const TODAY = (()=>{ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
 
 function storageKey(module){ return `workspace_${module}`; }
