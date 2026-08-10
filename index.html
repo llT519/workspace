@@ -487,7 +487,8 @@ body::before{display:none!important}
   <div class="auth-card">
     <h2 id="authTitle">🔐 登录</h2>
     <p class="auth-sub" id="authSub"></p>
-    <input type="password" class="auth-input" id="authPassword" placeholder="输入密码" maxlength="64" autocomplete="off">
+    <input class="auth-input" id="authUsername" placeholder="账号" maxlength="32" autocomplete="off">
+    <input type="password" class="auth-input" id="authPassword" placeholder="密码" maxlength="64" autocomplete="off">
     <button class="auth-btn" id="authBtn">登 录</button>
     <div class="auth-error" id="authError"></div>
     <div class="lock-timer hidden" id="lockTimer"></div>
@@ -949,10 +950,11 @@ function showLockScreen(){
   const overlay = document.getElementById('authOverlay');
   overlay.classList.remove('hidden');
   document.getElementById('authTitle').textContent = '🔒 已锁定';
-  document.getElementById('authSub').textContent = '请输入密码解锁';
+  document.getElementById('authSub').textContent = '请输入账号密码解锁';
   document.getElementById('authBtn').textContent = '解 锁';
   document.getElementById('authLogoutLink').classList.remove('hidden');
   document.getElementById('authError').textContent = '';
+  document.getElementById('authUsername').value = '';
   document.getElementById('authPassword').value = '';
   document.getElementById('authPassword').focus();
   document.getElementById('lockTimer').classList.add('hidden');
@@ -962,13 +964,14 @@ function showLockScreen(){
 function showLoginScreen(firstTime){
   const overlay = document.getElementById('authOverlay');
   overlay.classList.remove('hidden');
-  document.getElementById('authTitle').textContent = firstTime ? '🔐 设置密码' : '🔐 登录';
-  document.getElementById('authSub').textContent = firstTime ? '首次使用，请设置一个密码' : '输入密码进入工作台';
-  document.getElementById('authBtn').textContent = firstTime ? '设 置' : '登 录';
+  document.getElementById('authTitle').textContent = firstTime ? '🔐 创建账号' : '🔐 登录';
+  document.getElementById('authSub').textContent = firstTime ? '首次使用，设置账号和密码' : '输入账号密码进入工作台';
+  document.getElementById('authBtn').textContent = firstTime ? '创 建' : '登 录';
   document.getElementById('authLogoutLink').classList.add('hidden');
   document.getElementById('authError').textContent = '';
+  document.getElementById('authUsername').value = '';
   document.getElementById('authPassword').value = '';
-  document.getElementById('authPassword').focus();
+  document.getElementById('authUsername').focus();
   document.getElementById('lockTimer').classList.add('hidden');
   checkLockState();
 }
@@ -1021,39 +1024,44 @@ function checkLockState(){
 }
 
 // --- 密码验证 ---
-async function verifyAndLogin(password, isSetup){
+async function verifyAndLogin(username, password, isSetup){
   // 检查锁定
   if(isLockedOut()){
     checkLockState();
     return;
   }
+  if(!username){
+    document.getElementById('authError').textContent = '请输入账号';
+    return;
+  }
+  const usernameLower = username.trim().toLowerCase();
   const hash = await hashPassword(password);
   if(isSetup){
-    // 首次设置密码
-    const credential = { passwordHash: hash, createdAt: Date.now() };
+    // 首次设置账号密码
+    const credential = { username: usernameLower, passwordHash: hash, createdAt: Date.now() };
     savePersistentAuth(credential, password);
-    _authSession = { passwordHash: hash, timestamp: Date.now() };
+    _authSession = { username: usernameLower, passwordHash: hash, timestamp: Date.now() };
     clearErrCount();
     localStorage.removeItem(LOCK_KEY);
     hideAuthOverlay();
     refreshAllData();
-    showToast('密码已设置，下次自动登录 ✓');
+    showToast('账号已创建，下次自动登录 ✓');
   }else{
-    // 验证密码
+    // 验证账号密码
     const stored = await loadPersistentAuth(password);
-    if(stored && stored.passwordHash === hash){
-      _authSession = { passwordHash: hash, timestamp: Date.now() };
+    if(stored && stored.username === usernameLower && stored.passwordHash === hash){
+      _authSession = { username: usernameLower, passwordHash: hash, timestamp: Date.now() };
       clearErrCount();
       localStorage.removeItem(LOCK_KEY);
       hideAuthOverlay();
       refreshAllData();
-      showToast('欢迎回来 👋');
+      showToast('欢迎回来，' + username + ' 👋');
     }else{
       const lockSec = recordFailedAttempt();
       const rem = (getErrCount().count || 0);
       document.getElementById('authError').textContent = 
         lockSec ? `错误次数过多，锁定 ${Math.ceil(lockSec/60)} 分钟` :
-        `密码错误，还剩 ${5-rem} 次机会`;
+        `账号或密码错误，还剩 ${5-rem} 次机会`;
       document.getElementById('authPassword').value = '';
       checkLockState();
     }
@@ -1072,13 +1080,17 @@ async function initAuth(){
   
   // 设置登录按钮事件
   document.getElementById('authBtn').addEventListener('click', async function(){
+    const uname = document.getElementById('authUsername').value.trim();
     const pw = document.getElementById('authPassword').value;
     if(!pw) return;
     const isSetup = !hasPersistentAuth();
-    await verifyAndLogin(pw, isSetup);
+    await verifyAndLogin(uname, pw, isSetup);
   });
   document.getElementById('authPassword').addEventListener('keydown', async function(e){
     if(e.key==='Enter'){ document.getElementById('authBtn').click(); }
+  });
+  document.getElementById('authUsername').addEventListener('keydown', async function(e){
+    if(e.key==='Enter'){ document.getElementById('authPassword').focus(); }
   });
   document.getElementById('authLogoutLink').addEventListener('click', handleLogout);
 
