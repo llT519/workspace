@@ -465,31 +465,31 @@ body::before{display:none!important}
       <h1>✨ 我的工作台</h1>
       <p>专注每一天</p>
     </div>
-    <button class="nav-item active" data-module="dashboard">
+    <button class="nav-item active" data-module="dashboard" onclick="switchModule('dashboard')" onclick="switchModule('dashboard')">
       <span class="nav-icon">📊</span><span class="nav-label">仪表盘</span>
     </button>
-    <button class="nav-item" data-module="plan">
+    <button class="nav-item" data-module="plan" onclick="switchModule('plan')" onclick="switchModule('plan')">
       <span class="nav-icon">📋</span><span class="nav-label">每日计划</span>
     </button>
-    <button class="nav-item" data-module="reading">
+    <button class="nav-item" data-module="reading" onclick="switchModule('reading')" onclick="switchModule('reading')">
       <span class="nav-icon">📖</span><span class="nav-label">每日阅读</span>
     </button>
-    <button class="nav-item" data-module="inspiration">
+    <button class="nav-item" data-module="inspiration" onclick="switchModule('inspiration')" onclick="switchModule('inspiration')">
       <span class="nav-icon">💡</span><span class="nav-label">灵感记录</span>
     </button>
-    <button class="nav-item" data-module="exercise">
+    <button class="nav-item" data-module="exercise" onclick="switchModule('exercise')" onclick="switchModule('exercise')">
       <span class="nav-icon">🏃</span><span class="nav-label">锻炼身体</span>
     </button>
-    <button class="nav-item" data-module="savings">
+    <button class="nav-item" data-module="savings" onclick="switchModule('savings')" onclick="switchModule('savings')">
       <span class="nav-icon">💰</span><span class="nav-label">存钱计划</span>
     </button>
-    <button class="nav-item" data-module="english">
+    <button class="nav-item" data-module="english" onclick="switchModule('english')" onclick="switchModule('english')">
       <span class="nav-icon">📝</span><span class="nav-label">英语学习</span>
     </button>
-    <button class="nav-item" data-module="memo">
+    <button class="nav-item" data-module="memo" onclick="switchModule('memo')" onclick="switchModule('memo')">
       <span class="nav-icon">📌</span><span class="nav-label">备忘录</span>
     </button>
-    <button class="nav-item" id="settingsBtn" style="margin-top:auto">
+    <button class="nav-item" id="settingsBtn" style="margin-top:auto" onclick="openSettings()">
       <span class="nav-icon">🎨</span><span class="nav-label">主题设置</span>
     </button>
   </nav>
@@ -868,24 +868,19 @@ function showToast(msg){
 
 // ==================== 模块切换 ====================
 let currentModule = 'dashboard';
-document.querySelectorAll('.nav-item[data-module]').forEach(btn=>{
-  btn.addEventListener('click', function(){
-    const module = this.dataset.module;
-    if(module === currentModule) return;
-    // 切换导航高亮
-    document.querySelectorAll('.nav-item[data-module]').forEach(b=>b.classList.remove('active'));
-    this.classList.add('active');
-    // 切换模块显示
-    document.querySelectorAll('.module-card').forEach(c=>c.classList.remove('active'));
-    const target = document.getElementById('module-'+module);
-    if(target){ target.classList.add('active'); target.style.animation='none'; target.offsetHeight; target.style.animation=''; }
-    currentModule = module;
-    // 刷新模块数据
-    refreshModule(module);
-    // 移动端滚动到顶部
-    document.getElementById('main').scrollTop = 0;
-  });
-});
+function switchModule(module){
+  if(module === currentModule) return;
+  document.querySelectorAll('.nav-item[data-module]').forEach(b=>b.classList.remove('active'));
+  var navBtn = document.querySelector('.nav-item[data-module="'+module+'"]');
+  if(navBtn) navBtn.classList.add('active');
+  document.querySelectorAll('.module-card').forEach(c=>c.classList.remove('active'));
+  var target = document.getElementById('module-'+module);
+  if(target){ target.classList.add('active'); target.style.animation='none'; target.offsetHeight; target.style.animation=''; }
+  currentModule = module;
+  refreshModule(module);
+  document.getElementById('main').scrollTop = 0;
+}
+window.switchModule = switchModule;
 
 // ==================== 概览数据刷新 ====================
 function refreshOverview(){
