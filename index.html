@@ -1090,41 +1090,32 @@ function refreshAllData(){
 
 // --- 初始化流程 ---
 function initAuth(){
-  const wasLocked = localStorage.getItem(LOCK_KEY) === '1';
-  const hasCred = hasPersistentAuth();
-  
-  // 设置登录按钮事件
-  document.getElementById('authBtn').addEventListener('click', function(){
-    const uname = document.getElementById('authUsername').value.trim();
-    const pw = document.getElementById('authPassword').value;
+  // 直接用 onclick 绑定（确保一定生效）
+  document.getElementById('authBtn').onclick = function(){
+    var uname = document.getElementById('authUsername').value.trim();
+    var pw = document.getElementById('authPassword').value;
     if(!pw){ document.getElementById('authError').textContent = '请输入密码'; return; }
-    const isSetup = !hasPersistentAuth();
-    try {
-      verifyAndLogin(uname, pw, isSetup);
-    } catch(e) {
-      document.getElementById('authError').textContent = '错误：' + e.message;
-    }
-  });
-  document.getElementById('authPassword').addEventListener('keydown', function(e){
-    if(e.key==='Enter'){ document.getElementById('authBtn').click(); }
-  });
-  document.getElementById('authUsername').addEventListener('keydown', function(e){
-    if(e.key==='Enter'){ document.getElementById('authPassword').focus(); }
-  });
-  document.getElementById('authLogoutLink').addEventListener('click', handleLogout);
+    var isSetup = !hasPersistentAuth();
+    try { verifyAndLogin(uname, pw, isSetup); }
+    catch(e) { document.getElementById('authError').textContent = '错误：' + e.message; }
+  };
+  document.getElementById('authPassword').onkeydown = function(e){
+    if(e.key==='Enter') document.getElementById('authBtn').click();
+  };
+  document.getElementById('authUsername').onkeydown = function(e){
+    if(e.key==='Enter') document.getElementById('authPassword').focus();
+  };
+  document.getElementById('authLogoutLink').onclick = handleLogout;
+
+  var wasLocked = false, hasCred = false;
+  try { wasLocked = localStorage.getItem(LOCK_KEY) === '1'; } catch(e){}
+  try { hasCred = hasPersistentAuth(); } catch(e){}
 
   if(!hasCred){
-    // 首次使用：设置密码
     showLoginScreen(true);
   }else if(wasLocked){
-    // 之前手动锁定
     showLockScreen();
   }else{
-    // 有凭证：尝试自动登录
-    // 需要密码才能解密凭证，凭证本身是加密的
-    // 这里改为：有凭证就尝试自动登录（用存下来的 session）
-    // 但密码只有用户知道... 
-    // 折中方案：凭证存在=信任此设备，直接进
     _authSession = { autoLogin: true, timestamp: Date.now() };
     hideAuthOverlay();
     refreshAllData();
