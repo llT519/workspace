@@ -661,6 +661,12 @@ body::before{display:none!important}
       <input type="range" id="rangeAccent" min="0.1" max="1" step="0.05" value="0.34">
     </div>
   </div>
+  <hr style="border-color:var(--border-subtle);margin:8px 0">
+  <h3 style="font-size:14px">💾 数据同步</h3>
+  <p style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px">换设备时导出数据，在新设备导入即可</p>
+  <button class="btn" id="exportDataBtn" style="width:100%;margin-bottom:6px">📥 导出数据 (下载JSON)</button>
+  <button class="btn btn-ghost" id="importDataBtn" style="width:100%">📤 导入数据 (选择JSON)</button>
+  <input type="file" id="importFileInput" accept=".json" style="display:none">
 </aside>
 
 <!-- Toast -->
@@ -1351,6 +1357,58 @@ function syncSliders(){
 document.getElementById('settingsBtn').addEventListener('click', openSettings);
 document.getElementById('settingsClose').addEventListener('click', closeSettings);
 document.getElementById('settingsBackdrop').addEventListener('click', closeSettings);
+
+// ==================== 数据导出/导入 ====================
+function exportAllData(){
+  var allData = {};
+  for (var i = 0; i < localStorage.length; i++) {
+    var key = localStorage.key(i);
+    if (key.startsWith('workspace_')) {
+      allData[key] = JSON.parse(localStorage.getItem(key));
+    }
+  }
+  var blob = new Blob([JSON.stringify(allData, null, 2)], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  var now = new Date();
+  var dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  a.download = `workspace-backup-${dateStr}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('数据已导出 ✓');
+}
+
+function importAllData(file){
+  var reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      var data = JSON.parse(e.target.result);
+      var count = 0;
+      for (var key in data) {
+        if (key.startsWith('workspace_')) {
+          localStorage.setItem(key, JSON.stringify(data[key]));
+          count++;
+        }
+      }
+      showToast(`已导入 ${count} 条数据，刷新中…`);
+      setTimeout(function(){ location.reload(); }, 800);
+    } catch(err) {
+      showToast('导入失败：文件格式错误');
+    }
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById('exportDataBtn').addEventListener('click', exportAllData);
+document.getElementById('importDataBtn').addEventListener('click', function(){
+  document.getElementById('importFileInput').click();
+});
+document.getElementById('importFileInput').addEventListener('change', function(e){
+  if (e.target.files[0]) {
+    importAllData(e.target.files[0]);
+  }
+});
 
 // ==================== 工具函数 ====================
 function escapeHtml(str){
