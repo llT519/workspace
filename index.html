@@ -504,7 +504,7 @@ body::before{display:none!important}
     <p class="auth-sub" id="authSub"></p>
     <input class="auth-input" id="authUsername" placeholder="用户名" maxlength="32" autocomplete="off">
     <input type="password" class="auth-input" id="authPassword" placeholder="密码" maxlength="64" autocomplete="off">
-    <button class="auth-btn" id="authBtn">登 录</button>
+    <button class="auth-btn" id="authBtn" onclick="window._doLogin()">登 录</button>
     <div class="auth-error" id="authError"></div>
     <div class="lock-timer hidden" id="lockTimer"></div>
     <span class="auth-link hidden" id="authLogoutLink">退出免登（下次需重新登录）</span>
@@ -1091,17 +1091,17 @@ function refreshAllData(){
 
 // --- 初始化流程 ---
 function initAuth(){
-  // 直接用 onclick 绑定（确保一定生效）
-  document.getElementById('authBtn').onclick = function(){
+  // 暴露全局登录函数（HTML onclick 直接调用）
+  window._doLogin = function(){
     var uname = document.getElementById('authUsername').value.trim();
     var pw = document.getElementById('authPassword').value;
     if(!pw){ document.getElementById('authError').textContent = '请输入密码'; return; }
     var isSetup = !hasPersistentAuth();
-    try { verifyAndLogin(uname, pw, isSetup); }
-    catch(e) { document.getElementById('authError').textContent = '错误：' + e.message; }
+    verifyAndLogin(uname, pw, isSetup);
   };
+  // 回车快捷登录
   document.getElementById('authPassword').onkeydown = function(e){
-    if(e.key==='Enter') document.getElementById('authBtn').click();
+    if(e.key==='Enter') window._doLogin();
   };
   document.getElementById('authUsername').onkeydown = function(e){
     if(e.key==='Enter') document.getElementById('authPassword').focus();
@@ -1911,15 +1911,8 @@ function escapeHtml(str){
 }
 
 // ==================== 初始化 ====================
-async function init(){
-  // 先走登录流程
-  try {
-    await initAuth();
-  } catch(e) {
-    console.error('登录初始化失败:', e);
-    // 如果登录系统失败，直接显示工作台
-    document.getElementById('authOverlay').classList.add('hidden');
-  }
+function init(){
+  initAuth();
   // 渲染默认模块
   renderDashboard();
   // 初始化概览（在 fluidglass 引擎加载后）
@@ -1935,7 +1928,7 @@ async function init(){
 // Fluid Glass 概览配置已在 engine.js 加载前通过独立脚本设置
 
 // 启动
-document.addEventListener('DOMContentLoaded', async ()=>{ await init(); });
+document.addEventListener('DOMContentLoaded', init);
 </script>
 
 </body>
