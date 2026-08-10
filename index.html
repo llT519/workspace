@@ -1929,9 +1929,15 @@ function escapeHtml(str){
 }
 
 // ==================== 初始化 ====================
-function init(){
+async function init(){
   // 先走登录流程
-  initAuth();
+  try {
+    await initAuth();
+  } catch(e) {
+    console.error('登录初始化失败:', e);
+    // 如果登录系统失败，直接显示工作台
+    document.getElementById('authOverlay').classList.add('hidden');
+  }
   // 渲染默认模块
   renderDashboard();
   // 初始化概览（在 fluidglass 引擎加载后）
@@ -1947,7 +1953,7 @@ function init(){
 // Fluid Glass 概览配置已在 engine.js 加载前通过独立脚本设置
 
 // 启动
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', async ()=>{ await init(); });
 </script>
 
 </body>
