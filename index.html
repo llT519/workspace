@@ -437,9 +437,63 @@ body::before{display:none!important}
 }
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media (min-width:768px){.toast{bottom:30px}}
+
+/* ========== 登录/锁屏覆盖层 ========== */
+.auth-overlay{
+  position:fixed;inset:0;z-index:9999;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(2,8,7,.96);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+}
+.auth-overlay.hidden{display:none}
+.auth-card{
+  width:min(380px,90vw);padding:32px 28px;text-align:center;
+  background:linear-gradient(145deg,rgba(15,23,21,.9),rgba(7,13,12,.95));
+  border:1px solid var(--border-default);border-radius:28px;
+  box-shadow:0 24px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06);
+}
+.auth-card h2{font-size:20px;font-weight:700;margin-bottom:6px;color:var(--text-primary)}
+.auth-card .auth-sub{font-size:12px;color:var(--text-tertiary);margin-bottom:20px}
+.auth-input{
+  width:100%;padding:12px 16px;margin-bottom:12px;
+  background:rgba(0,0,0,.3);border:1px solid var(--border-default);
+  border-radius:14px;color:var(--text-primary);font-size:15px;
+  text-align:center;outline:none;font-family:inherit;
+  transition:border-color .2s;
+}
+.auth-input:focus{border-color:var(--accent-primary)}
+.auth-btn{
+  width:100%;padding:12px;border-radius:14px;cursor:pointer;
+  border:none;font-size:15px;font-weight:600;font-family:inherit;
+  background:var(--accent-primary);color:#000;
+  transition:all .2s;
+}
+.auth-btn:hover{opacity:.85;transform:translateY(-1px)}
+.auth-btn:active{transform:scale(.97)}
+.auth-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.auth-error{font-size:12px;color:#ff7280;margin-top:8px;min-height:18px}
+.auth-link{
+  font-size:12px;color:var(--text-tertiary);cursor:pointer;
+  margin-top:14px;display:inline-block;transition:color .2s;
+}
+.auth-link:hover{color:var(--text-primary)}
+.lock-timer{font-size:28px;font-weight:700;color:var(--accent-primary);margin:12px 0}
 </style>
 </head>
 <body>
+
+<!-- ========== 登录/锁屏覆盖层 ========== -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-card">
+    <h2 id="authTitle">🔐 登录</h2>
+    <p class="auth-sub" id="authSub"></p>
+    <input type="password" class="auth-input" id="authPassword" placeholder="输入密码" maxlength="64" autocomplete="off">
+    <button class="auth-btn" id="authBtn">登 录</button>
+    <div class="auth-error" id="authError"></div>
+    <div class="lock-timer hidden" id="lockTimer"></div>
+    <span class="auth-link hidden" id="authLogoutLink">退出免登（下次需重新登录）</span>
+  </div>
+</div>
 
 <!-- 主布局 -->
 <div id="app">
@@ -753,7 +807,304 @@ function savePaletteSettings(){
   }));
 }
 
-// ==================== 数据管理 ====================
+// ==================== 登录安全模块 ====================
+// 存储键
+const AUTH_KEY = 'workspace_auth_v2';
+const LOCK_KEY = 'workspace_lock';
+const ERR_KEY = 'workspace_auth_err';
+
+// 闲置超时：15分钟
+const IDLE_TIMEOUT = 15 * 60 * 1000;
+
+// 内存会话状态
+let _authSession = null;  // { passwordHash, timestamp }
+let _idleTimer = null;
+let _isLocked = false;
+
+// --- 加密工具（Web Crypto API） ---
+function ab2base64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function base64ab(str){ return Uint8Array.from(atob(str), c=>c.charCodeAt(0)).buffer; }
+
+async function hashPassword(password){
+  const enc = new TextEncoder().encode(password);
+  const hash = await crypto.subtle.digest('SHA-256', enc);
+  return ab2base64(hash);
+}
+
+async function encryptCredential(data, password){
+  // 从密码派生 AES 密钥
+  const enc = new TextEncoder().encode(password);
+  const keyMat = await crypto.subtle.importKey('raw', enc, 'PBKDF2', false, ['deriveKey']);
+  const aesKey = await crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt: new TextEncoder().encode('workspace-salt'), iterations:100000, hash:'SHA-256' },
+    keyMat, { name:'AES-GCM', length:256 }, false, ['encrypt']
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(data));
+  const ciphertext = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, aesKey, plaintext);
+  // 返回 base64: iv + ciphertext
+  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(ciphertext), iv.length);
+  return ab2base64(combined.buffer);
+}
+
+async function decryptCredential(encrypted, password){
+  try{
+    const combined = new Uint8Array(base64ab(encrypted));
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const enc = new TextEncoder().encode(password);
+    const keyMat = await crypto.subtle.importKey('raw', enc, 'PBKDF2', false, ['deriveKey']);
+    const aesKey = await crypto.subtle.deriveKey(
+      { name:'PBKDF2', salt: new TextEncoder().encode('workspace-salt'), iterations:100000, hash:'SHA-256' },
+      keyMat, { name:'AES-GCM', length:256 }, false, ['decrypt']
+    );
+    const plaintext = await crypto.subtle.decrypt({ name:'AES-GCM', iv }, aesKey, ciphertext);
+    return JSON.parse(new TextDecoder().decode(plaintext));
+  }catch(e){ return null; }
+}
+
+// --- 错误计数 ---
+function getErrCount(){
+  try{ return JSON.parse(localStorage.getItem(ERR_KEY)||'{}'); }catch(e){ return {}; }
+}
+function setErrCount(v){ localStorage.setItem(ERR_KEY, JSON.stringify(v)); }
+
+function isLockedOut(){
+  const e = getErrCount();
+  if(e.lockUntil && Date.now() < e.lockUntil) return true;
+  if(e.lockUntil && Date.now() >= e.lockUntil){ setErrCount({}); return false; }
+  return false;
+}
+
+function recordFailedAttempt(){
+  const e = getErrCount();
+  e.count = (e.count||0) + 1;
+  if(e.count >= 5){
+    e.lockUntil = Date.now() + 3*60*1000;
+    e.count = 0;
+  }
+  setErrCount(e);
+  return e.lockUntil ? Math.ceil((e.lockUntil - Date.now())/1000) : 0;
+}
+
+function clearErrCount(){ setErrCount({}); }
+
+// --- 持久凭证 ---
+function savePersistentAuth(credentialData, password){
+  encryptCredential(credentialData, password).then(encrypted => {
+    localStorage.setItem(AUTH_KEY, JSON.stringify({
+      v:2, data: encrypted, ts: Date.now()
+    }));
+  });
+}
+
+async function loadPersistentAuth(password){
+  try{
+    const raw = localStorage.getItem(AUTH_KEY);
+    if(!raw) return null;
+    const stored = JSON.parse(raw);
+    if(!stored.data) return null;
+    const decrypted = await decryptCredential(stored.data, password);
+    return decrypted;
+  }catch(e){ return null; }
+}
+
+function clearPersistentAuth(){
+  localStorage.removeItem(AUTH_KEY);
+  _authSession = null;
+}
+
+function hasPersistentAuth(){
+  return !!localStorage.getItem(AUTH_KEY);
+}
+
+// --- 闲置检测 ---
+function resetIdleTimer(){
+  clearTimeout(_idleTimer);
+  if(!_isLocked && _authSession){
+    _idleTimer = setTimeout(lockApp, IDLE_TIMEOUT);
+  }
+}
+
+function setupIdleDetection(){
+  ['mousemove','keydown','touchstart','click','scroll'].forEach(evt=>{
+    document.addEventListener(evt, resetIdleTimer, {passive:true});
+  });
+  resetIdleTimer();
+}
+
+// --- 锁定/解锁 ---
+function lockApp(){
+  if(_isLocked || !_authSession) return;
+  _isLocked = true;
+  clearTimeout(_idleTimer);
+  // 清除内存会话，保留持久凭证
+  _authSession = null;
+  showLockScreen();
+}
+
+function showLockScreen(){
+  const overlay = document.getElementById('authOverlay');
+  overlay.classList.remove('hidden');
+  document.getElementById('authTitle').textContent = '🔒 已锁定';
+  document.getElementById('authSub').textContent = '请输入密码解锁';
+  document.getElementById('authBtn').textContent = '解 锁';
+  document.getElementById('authLogoutLink').classList.remove('hidden');
+  document.getElementById('authError').textContent = '';
+  document.getElementById('authPassword').value = '';
+  document.getElementById('authPassword').focus();
+  document.getElementById('lockTimer').classList.add('hidden');
+  checkLockState();
+}
+
+function showLoginScreen(firstTime){
+  const overlay = document.getElementById('authOverlay');
+  overlay.classList.remove('hidden');
+  document.getElementById('authTitle').textContent = firstTime ? '🔐 设置密码' : '🔐 登录';
+  document.getElementById('authSub').textContent = firstTime ? '首次使用，请设置一个密码' : '输入密码进入工作台';
+  document.getElementById('authBtn').textContent = firstTime ? '设 置' : '登 录';
+  document.getElementById('authLogoutLink').classList.add('hidden');
+  document.getElementById('authError').textContent = '';
+  document.getElementById('authPassword').value = '';
+  document.getElementById('authPassword').focus();
+  document.getElementById('lockTimer').classList.add('hidden');
+  checkLockState();
+}
+
+function hideAuthOverlay(){
+  document.getElementById('authOverlay').classList.add('hidden');
+  _isLocked = false;
+  setupIdleDetection();
+}
+
+function manualLock(){
+  localStorage.setItem(LOCK_KEY, '1');
+  lockApp();
+}
+
+function handleLogout(){
+  clearPersistentAuth();
+  clearErrCount();
+  localStorage.removeItem(LOCK_KEY);
+  _authSession = null;
+  _isLocked = false;
+  clearTimeout(_idleTimer);
+  showLoginScreen(!hasPersistentAuth());
+  showToast('已注销，下次需要重新登录');
+}
+
+// --- 检查锁定状态 ---
+function checkLockState(){
+  const e = getErrCount();
+  const el = document.getElementById('lockTimer');
+  const btn = document.getElementById('authBtn');
+  const pw = document.getElementById('authPassword');
+  if(e.lockUntil && Date.now() < e.lockUntil){
+    const sec = Math.ceil((e.lockUntil - Date.now())/1000);
+    el.classList.remove('hidden');
+    el.textContent = '⏳ ' + Math.floor(sec/60) + ':' + String(sec%60).padStart(2,'0');
+    btn.disabled = true;
+    pw.disabled = true;
+    setTimeout(checkLockState, 1000);
+  }else if(e.lockUntil && Date.now() >= e.lockUntil){
+    el.classList.add('hidden');
+    btn.disabled = false;
+    pw.disabled = false;
+    clearErrCount();
+  }else{
+    el.classList.add('hidden');
+    btn.disabled = false;
+    pw.disabled = false;
+  }
+}
+
+// --- 密码验证 ---
+async function verifyAndLogin(password, isSetup){
+  // 检查锁定
+  if(isLockedOut()){
+    checkLockState();
+    return;
+  }
+  const hash = await hashPassword(password);
+  if(isSetup){
+    // 首次设置密码
+    const credential = { passwordHash: hash, createdAt: Date.now() };
+    savePersistentAuth(credential, password);
+    _authSession = { passwordHash: hash, timestamp: Date.now() };
+    clearErrCount();
+    localStorage.removeItem(LOCK_KEY);
+    hideAuthOverlay();
+    refreshAllData();
+    showToast('密码已设置，下次自动登录 ✓');
+  }else{
+    // 验证密码
+    const stored = await loadPersistentAuth(password);
+    if(stored && stored.passwordHash === hash){
+      _authSession = { passwordHash: hash, timestamp: Date.now() };
+      clearErrCount();
+      localStorage.removeItem(LOCK_KEY);
+      hideAuthOverlay();
+      refreshAllData();
+      showToast('欢迎回来 👋');
+    }else{
+      const lockSec = recordFailedAttempt();
+      const rem = (getErrCount().count || 0);
+      document.getElementById('authError').textContent = 
+        lockSec ? `错误次数过多，锁定 ${Math.ceil(lockSec/60)} 分钟` :
+        `密码错误，还剩 ${5-rem} 次机会`;
+      document.getElementById('authPassword').value = '';
+      checkLockState();
+    }
+  }
+}
+
+function refreshAllData(){
+  refreshModule(currentModule);
+  refreshOverview();
+}
+
+// --- 初始化流程 ---
+async function initAuth(){
+  const wasLocked = localStorage.getItem(LOCK_KEY) === '1';
+  const hasCred = hasPersistentAuth();
+  
+  // 设置登录按钮事件
+  document.getElementById('authBtn').addEventListener('click', async function(){
+    const pw = document.getElementById('authPassword').value;
+    if(!pw) return;
+    const isSetup = !hasPersistentAuth();
+    await verifyAndLogin(pw, isSetup);
+  });
+  document.getElementById('authPassword').addEventListener('keydown', async function(e){
+    if(e.key==='Enter'){ document.getElementById('authBtn').click(); }
+  });
+  document.getElementById('authLogoutLink').addEventListener('click', handleLogout);
+
+  if(!hasCred){
+    // 首次使用：设置密码
+    showLoginScreen(true);
+  }else if(wasLocked){
+    // 之前手动锁定
+    showLockScreen();
+  }else{
+    // 有凭证：尝试自动登录
+    // 需要密码才能解密凭证，凭证本身是加密的
+    // 这里改为：有凭证就尝试自动登录（用存下来的 session）
+    // 但密码只有用户知道... 
+    // 折中方案：凭证存在=信任此设备，直接进
+    _authSession = { autoLogin: true, timestamp: Date.now() };
+    hideAuthOverlay();
+    refreshAllData();
+  }
+}
+
+// --- 手动锁定按钮事件（在 init 中绑定） ---
+function bindLockButton(){
+  // 在品牌区域下方加锁定按钮（桌面端）
+  // 使用现有导航栏结构，在底部加
+}
 const TODAY = (()=>{ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
 
 function storageKey(module){ return `workspace_${module}`; }
@@ -1479,12 +1830,18 @@ function escapeHtml(str){
 
 // ==================== 初始化 ====================
 function init(){
+  // 先走登录流程
+  initAuth();
   // 渲染默认模块
   renderDashboard();
   // 初始化概览（在 fluidglass 引擎加载后）
   setTimeout(refreshOverview, 300);
   // 从云端拉取数据合并
   setTimeout(pullFromCloud, 1500);
+  // 绑定锁定按钮
+  document.getElementById('settingsBtn').insertAdjacentHTML('beforebegin', 
+    '<button class="nav-item" id="lockBtn"><span class="nav-icon">🔒</span><span class="nav-label">锁定</span></button>');
+  document.getElementById('lockBtn').addEventListener('click', manualLock);
 }
 
 // Fluid Glass 概览配置已在 engine.js 加载前通过独立脚本设置
