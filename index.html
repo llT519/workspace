@@ -771,7 +771,67 @@ function saveData(module, data, daily=false){
   try{
     const key = daily ? dailyKey(module) : storageKey(module);
     localStorage.setItem(key, JSON.stringify(data));
+    // 触发云端同步（防抖500ms）
+    scheduleCloudSync();
   } catch(e){ showToast('存储空间不足，请清理旧数据'); }
+}
+
+// ==================== 云端数据同步 ====================
+var _syncTimer = null;
+var _syncBusy = false;
+
+function scheduleCloudSync(){
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(doCloudSync, 500);
+}
+
+async function doCloudSync(){
+  if(_syncBusy) return;
+  _syncBusy = true;
+  try{
+    // 收集所有 workspace_ 数据
+    var allData = {};
+    for(var i=0;i<localStorage.length;i++){
+      var k = localStorage.key(i);
+      if(k.startsWith('workspace_')){
+        try{ allData[k] = JSON.parse(localStorage.getItem(k)); }catch(e){}
+      }
+    }
+    var resp = await fetch('/api/sync', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(allData)
+    });
+    if(resp.ok){ console.log('☁️ 数据已同步'); }
+  }catch(e){ /* 静默失败，不影响本地使用 */ }
+  _syncBusy = false;
+}
+
+// 页面加载时从云端拉取合并
+async function pullFromCloud(){
+  try{
+    var resp = await fetch('/api/sync');
+    if(!resp.ok) return;
+    var result = await resp.json();
+    if(!result.exists || !result.data) return;
+    var cloudData = result.data;
+    var merged = 0;
+    for(var k in cloudData){
+      if(!k.startsWith('workspace_')) continue;
+      var local = localStorage.getItem(k);
+      if(!local){
+        // 本地没有，直接用云端
+        localStorage.setItem(k, JSON.stringify(cloudData[k]));
+        merged++;
+      }
+    }
+    if(merged > 0){
+      console.log('☁️ 从云端合并了 ' + merged + ' 条数据');
+      // 如果有新数据合并，刷新模块
+      refreshModule(currentModule);
+      refreshOverview();
+    }
+  }catch(e){ /* 静默 */ }
 }
 
 // ==================== Toast 通知 ====================
@@ -1423,6 +1483,8 @@ function init(){
   renderDashboard();
   // 初始化概览（在 fluidglass 引擎加载后）
   setTimeout(refreshOverview, 300);
+  // 从云端拉取数据合并
+  setTimeout(pullFromCloud, 1500);
 }
 
 // Fluid Glass 概览配置已在 engine.js 加载前通过独立脚本设置
