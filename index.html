@@ -842,47 +842,54 @@ let _authSession = null;  // { passwordHash, timestamp }
 let _idleTimer = null;
 let _isLocked = false;
 
-// --- 加密工具（Web Crypto API） ---
+// --- 加密工具（简化为纯JS实现，兼容性更好） ---
 function ab2base64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
 function base64ab(str){ return Uint8Array.from(atob(str), c=>c.charCodeAt(0)).buffer; }
 
-async function hashPassword(password){
-  const enc = new TextEncoder().encode(password);
-  const hash = await crypto.subtle.digest('SHA-256', enc);
-  return ab2base64(hash);
+// 简单的 SHA-256 替代（不依赖 Web Crypto）
+function simpleHash(str){
+  var hash = 0;
+  for(var i=0;i<str.length;i++){
+    var chr = str.charCodeAt(i);
+    hash = ((hash<<5)-hash)+chr;
+    hash |= 0;
+  }
+  // 加盐并转16进制
+  var salt = 'workspace_2024_salt';
+  var combined = str + salt;
+  var h1 = 0xdeadbeef, h2 = 0xfaceb00c;
+  for(var i=0;i<combined.length;i++){
+    var c = combined.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+    h1 = (h1 << 13) | (h1 >>> 19);
+    h2 = (h2 << 17) | (h2 >>> 15);
+  }
+  return ('00000000'+(h1>>>0).toString(16)).slice(-8) + ('00000000'+(h2>>>0).toString(16)).slice(-8);
 }
 
-async function encryptCredential(data, password){
-  // 从密码派生 AES 密钥
-  const enc = new TextEncoder().encode(password);
-  const keyMat = await crypto.subtle.importKey('raw', enc, 'PBKDF2', false, ['deriveKey']);
-  const aesKey = await crypto.subtle.deriveKey(
-    { name:'PBKDF2', salt: new TextEncoder().encode('workspace-salt'), iterations:100000, hash:'SHA-256' },
-    keyMat, { name:'AES-GCM', length:256 }, false, ['encrypt']
-  );
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(JSON.stringify(data));
-  const ciphertext = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, aesKey, plaintext);
-  // 返回 base64: iv + ciphertext
-  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(ciphertext), iv.length);
-  return ab2base64(combined.buffer);
+// 简化的 AES 替代（XOR + Base64 混淆）
+function simpleEncrypt(data, password){
+  var json = JSON.stringify(data);
+  var key = simpleHash(password);
+  var result = '';
+  for(var i=0;i<json.length;i++){
+    var kc = key.charCodeAt(i % key.length);
+    result += String.fromCharCode(json.charCodeAt(i) ^ kc);
+  }
+  return btoa(result);
 }
 
-async function decryptCredential(encrypted, password){
+function simpleDecrypt(encrypted, password){
   try{
-    const combined = new Uint8Array(base64ab(encrypted));
-    const iv = combined.slice(0, 12);
-    const ciphertext = combined.slice(12);
-    const enc = new TextEncoder().encode(password);
-    const keyMat = await crypto.subtle.importKey('raw', enc, 'PBKDF2', false, ['deriveKey']);
-    const aesKey = await crypto.subtle.deriveKey(
-      { name:'PBKDF2', salt: new TextEncoder().encode('workspace-salt'), iterations:100000, hash:'SHA-256' },
-      keyMat, { name:'AES-GCM', length:256 }, false, ['decrypt']
-    );
-    const plaintext = await crypto.subtle.decrypt({ name:'AES-GCM', iv }, aesKey, ciphertext);
-    return JSON.parse(new TextDecoder().decode(plaintext));
+    var data = atob(encrypted);
+    var key = simpleHash(password);
+    var result = '';
+    for(var i=0;i<data.length;i++){
+      var kc = key.charCodeAt(i % key.length);
+      result += String.fromCharCode(data.charCodeAt(i) ^ kc);
+    }
+    return JSON.parse(result);
   }catch(e){ return null; }
 }
 
@@ -914,21 +921,17 @@ function clearErrCount(){ setErrCount({}); }
 
 // --- 持久凭证 ---
 function savePersistentAuth(credentialData, password){
-  encryptCredential(credentialData, password).then(encrypted => {
-    localStorage.setItem(AUTH_KEY, JSON.stringify({
-      v:2, data: encrypted, ts: Date.now()
-    }));
-  });
+  var encrypted = simpleEncrypt(credentialData, password);
+  localStorage.setItem(AUTH_KEY, JSON.stringify({ v:3, data: encrypted, ts: Date.now() }));
 }
 
-async function loadPersistentAuth(password){
+function loadPersistentAuth(password){
   try{
     const raw = localStorage.getItem(AUTH_KEY);
     if(!raw) return null;
     const stored = JSON.parse(raw);
     if(!stored.data) return null;
-    const decrypted = await decryptCredential(stored.data, password);
-    return decrypted;
+    return simpleDecrypt(stored.data, password);
   }catch(e){ return null; }
 }
 
@@ -1044,24 +1047,13 @@ function checkLockState(){
 }
 
 // --- 密码验证 ---
-async function verifyAndLogin(username, password, isSetup){
-  // 检查锁定
-  if(isLockedOut()){
-    checkLockState();
-    return;
-  }
-  if(!username){
-    document.getElementById('authError').textContent = '请输入用户名';
-    return;
-  }
-  if(username.trim().toLowerCase() !== 'llt519'){
-    document.getElementById('authError').textContent = '用户名错误';
-    return;
-  }
+function verifyAndLogin(username, password, isSetup){
+  if(isLockedOut()){ checkLockState(); return; }
+  if(!username){ document.getElementById('authError').textContent = '请输入用户名'; return; }
+  if(username.trim().toLowerCase() !== 'llt519'){ document.getElementById('authError').textContent = '用户名错误'; return; }
   const usernameLower = 'llt519';
-  const hash = await hashPassword(password);
+  const hash = simpleHash(password);
   if(isSetup){
-    // 首次设置密码（用户名固定为llt519）
     const credential = { username: usernameLower, passwordHash: hash, createdAt: Date.now() };
     savePersistentAuth(credential, password);
     _authSession = { username: usernameLower, passwordHash: hash, timestamp: Date.now() };
@@ -1071,8 +1063,7 @@ async function verifyAndLogin(username, password, isSetup){
     refreshAllData();
     showToast('账号已创建，下次自动登录 ✓');
   }else{
-    // 验证密码（用户名已校验为llt519）
-    const stored = await loadPersistentAuth(password);
+    const stored = loadPersistentAuth(password);
     if(stored && stored.passwordHash === hash){
       _authSession = { username: usernameLower, passwordHash: hash, timestamp: Date.now() };
       clearErrCount();
@@ -1098,27 +1089,26 @@ function refreshAllData(){
 }
 
 // --- 初始化流程 ---
-async function initAuth(){
+function initAuth(){
   const wasLocked = localStorage.getItem(LOCK_KEY) === '1';
   const hasCred = hasPersistentAuth();
   
   // 设置登录按钮事件
-  document.getElementById('authBtn').addEventListener('click', async function(){
+  document.getElementById('authBtn').addEventListener('click', function(){
     const uname = document.getElementById('authUsername').value.trim();
     const pw = document.getElementById('authPassword').value;
     if(!pw){ document.getElementById('authError').textContent = '请输入密码'; return; }
     const isSetup = !hasPersistentAuth();
     try {
-      await verifyAndLogin(uname, pw, isSetup);
+      verifyAndLogin(uname, pw, isSetup);
     } catch(e) {
-      document.getElementById('authError').textContent = '登录失败：' + (e.message || '未知错误');
-      console.error(e);
+      document.getElementById('authError').textContent = '错误：' + e.message;
     }
   });
-  document.getElementById('authPassword').addEventListener('keydown', async function(e){
+  document.getElementById('authPassword').addEventListener('keydown', function(e){
     if(e.key==='Enter'){ document.getElementById('authBtn').click(); }
   });
-  document.getElementById('authUsername').addEventListener('keydown', async function(e){
+  document.getElementById('authUsername').addEventListener('keydown', function(e){
     if(e.key==='Enter'){ document.getElementById('authPassword').focus(); }
   });
   document.getElementById('authLogoutLink').addEventListener('click', handleLogout);
